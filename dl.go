@@ -1,17 +1,17 @@
 package main
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/fatih/color"
@@ -24,7 +24,8 @@ var (
 	helpMsg = `Dl - Print, download or copy website content`
 )
 
-//TODO: Detect file extension
+//TODO: Maybe detect file extension
+// Let setLocalClip give out a writer
 
 func main() {
 	if len(os.Args) == 1 {
@@ -41,43 +42,55 @@ func main() {
 		return
 	}
 	if hasOption, _ := argsHaveOption("print", "p"); hasOption {
-		err, f := getAndWriteNormalizeUrl(os.Args[2], true)
+		err := getAndWriteNormalizeUrl(os.Args[2], os.Stdout, true)
 		if err != nil {
 			handleErr(err)
 			return
 		}
-		f(os.Stdout)
 		return
 	}
 	if hasOption, _ := argsHaveOption("copy", "c"); hasOption {
-		buf := new(bytes.Buffer)
-		err, f := getAndWriteNormalizeUrl(os.Args[2], true)
+		err, w := getClipWriter()
 		if err != nil {
 			handleErr(err)
 			return
 		}
-		f(buf)
-		all, _ := ioutil.ReadAll(buf)
-		setLocalClip(string(all))
+		err = getAndWriteNormalizeUrl(os.Args[2], w, true)
+		if err != nil {
+			handleErr(err)
+			return
+		}
+		w.Close()
 		return
 	}
+
 	writeTo := filepath.Base(os.Args[1])
 	if exists(writeTo) {
 		handleErrStr("Not overwriting " + writeTo + ". Exiting.")
 		return
 	}
+
 	outFile, err := os.Create(writeTo)
 	if err != nil {
 		handleErr(err)
 		return
 	}
-	err, f := getAndWriteNormalizeUrl(os.Args[1], true)
-	if err != nil {
-		_ = os.Remove(writeTo)
-		handleErr(err)
-	}
-	f(outFile)
 	defer outFile.Close()
+
+	c := make(chan os.Signal)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-c
+		os.Remove(writeTo)
+		os.Exit(0)
+	}()
+
+	err = getAndWriteNormalizeUrl(os.Args[1], outFile, true)
+	if err != nil {
+		os.Remove(writeTo)
+		handleErr(err)
+		return
+	}
 }
 
 func exists(path string) bool {
@@ -94,53 +107,29 @@ func argsHaveOption(long string, short string) (hasOption bool, foundAt int) {
 	return false, 0
 }
 
-func getAndWriteNormalizeUrl(website string, bar bool) (err error, f func(io.Writer)) {
-	err, f = getAndWrite(website, bar)
-	//var url string
-	//var continueBool bool
+func getAndWriteNormalizeUrl(website string, w io.Writer, bar bool) error {
+	err := getAndWrite(website, w, bar)
 	if err != nil && !strings.HasPrefix(website, "https://") && !strings.HasPrefix(website, "http://") { // protocol not already mentioned and error occurred
-		err, f = getAndWrite("https://"+website, bar)
+		err = getAndWrite("https://"+website, w, bar)
 		if err != nil {
 			stderrln("Resorting to http...")
-			err, f = getAndWrite("http://"+website, bar)
+			err = getAndWrite("http://"+website, w, bar)
 			if err != nil {
-				return err, nil
+				return err
 			}
 		}
 	}
-	return nil, f
-	//for i := 1; err != nil &&
-	//	continueBool &&
-	//	!strings.HasPrefix(website, "https://") &&
-	//	!strings.HasPrefix(website, "http://"); i++ {
-	//	switch i {
-	//	case 1:
-	//		if !strings.HasPrefix(website, "https://") {
-	//			url = "https://" + website
-	//		}
-	//	case 2:
-	//		if !strings.HasPrefix(website, "http://") {
-	//			url = "http://" + website
-	//		}
-	//	default:
-	//		continueBool = false
-	//	}
-	//	err = getAndWrite(url, writer)
-	//}
-	//if err != nil {
-	//	handleErr(err)
-	//}
+	return nil
 }
 
-func getAndWrite(website string, bar bool) (error, func(io.Writer)) {
+func getAndWrite(website string, w io.Writer, bar bool) error {
 	response, err := http.Get(website)
 	//mime := mimetype.Detect([]byte)
 	if err != nil {
-		return err, nil
+		return err
 	}
 	defer response.Body.Close()
 	if bar {
-		//bar := pb.DefaultBytes(response.ContentLength)
 		pbar := pb.NewOptions64(response.ContentLength,
 			pb.OptionEnableColorCodes(true),
 			pb.OptionShowBytes(true),
@@ -150,24 +139,23 @@ func getAndWrite(website string, bar bool) (error, func(io.Writer)) {
 			pb.OptionOnCompletion(func() {
 				stderrln()
 			}),
-			//pb.OptionClearOnFinish(),
-			//pb.OptionSetWidth(15),
 			pb.OptionSetDescription("Downloading"),
 			pb.OptionFullWidth(),
 			pb.OptionSetTheme(pb.Theme{
-				Saucer: "=",
-				//SaucerHead:    "[green][reset]",
+				Saucer:        "=",
 				SaucerPadding: " ",
 				BarStart:      "[",
 				BarEnd:        "]",
 			}))
-		return nil, func(w io.Writer) { io.Copy(io.MultiWriter(w, pbar), response.Body) }
+		io.Copy(io.MultiWriter(w, pbar), response.Body)
+		return nil
 	} else {
-		return nil, func(w io.Writer) { io.Copy(w, response.Body) }
+		io.Copy(w, response.Body)
+		return nil
 	}
 }
 
-func setLocalClip(s string) {
+func getClipWriter() (error, *clipboard) {
 	var copyCmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
@@ -190,27 +178,33 @@ func setLocalClip(s string) {
 	}
 	in, err := copyCmd.StdinPipe()
 	if err != nil {
-		handleErr(err)
-		return
+		return err, nil
 	}
 	if err = copyCmd.Start(); err != nil {
-		handleErr(err)
-		return
+		return err, nil
 	}
-	if runtime.GOOS != "windows" {
-		if _, err = in.Write([]byte(s)); err != nil {
-			handleErr(err)
-			return
-		}
-		if err = in.Close(); err != nil {
-			handleErr(err)
-			return
-		}
+	return nil, &clipboard{
+		in,
+		copyCmd,
 	}
-	if err = copyCmd.Wait(); err != nil {
-		handleErr(err)
-		return
+}
+
+type clipboard struct {
+	in  io.WriteCloser
+	cmd *exec.Cmd
+}
+
+func (c *clipboard) Close() error {
+	if err := c.in.Close(); err != nil {
+		return err
 	}
+	if err := c.cmd.Wait(); err != nil {
+		return err
+	}
+	return nil
+}
+func (c *clipboard) Write(p []byte) (n int, err error) {
+	return c.in.Write(p)
 }
 
 func handleErr(err error) {
