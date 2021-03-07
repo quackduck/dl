@@ -21,7 +21,28 @@ import (
 
 var (
 	version = "dev"
-	helpMsg = `Dl - Print, download or copy website content`
+	helpMsg = `Dl - Print, download or copy website content
+Usage: dl [-n/--no-overwrite] [-p/--print | -c/--copy] <url>
+       dl [-h/--help | --version/-v]
+
+Without any options, Dl downloads to a file in the working directory.
+When downloading data, Dl shows a progress bar on stderr.
+If the url does not have an http or https protocol specified, Dl will try https
+and then http.
+
+Options:
+      -o, --no-overwrite   don't overwrite existing files
+      -p, --print          print downloaded data on stdout
+      -c, --copy           copy data to clipboard (needs one of xclip, xsel, 
+                           wl-copy or termux-clipboard-set installed on Linux)
+Examples:
+       dl google.com
+       dl http://foo.com
+       dl golang.org/dl/go1.16.src.tar.gz
+       dl -c raw.githubusercontent.com/quackduck/dl/main/dl.go
+       dl -p raw.githubusercontent.com/octocat/Hello-World/master/README
+`
+	allowOverwrite = true
 )
 
 //TODO: Maybe detect file extension
@@ -41,8 +62,14 @@ func main() {
 		fmt.Println("Dl " + version)
 		return
 	}
+	if hasOption, i := argsHaveOption("no-overwrite", "n"); hasOption {
+		allowOverwrite = false
+		os.Args = removeKeepOrder(os.Args, i)
+		main()
+		return
+	}
 	if hasOption, _ := argsHaveOption("print", "p"); hasOption {
-		err := getAndWriteNormalizeUrl(os.Args[2], os.Stdout, true)
+		err := getAndWriteNormalizeUrl(os.Args[2], os.Stdout)
 		if err != nil {
 			handleErr(err)
 			return
@@ -55,7 +82,7 @@ func main() {
 			handleErr(err)
 			return
 		}
-		err = getAndWriteNormalizeUrl(os.Args[2], w, true)
+		err = getAndWriteNormalizeUrl(os.Args[2], w)
 		if err != nil {
 			handleErr(err)
 			return
@@ -65,7 +92,8 @@ func main() {
 	}
 
 	writeTo := filepath.Base(os.Args[1])
-	if exists(writeTo) {
+
+	if !allowOverwrite && exists(writeTo) {
 		handleErrStr("Not overwriting " + writeTo + ". Exiting.")
 		return
 	}
@@ -85,7 +113,7 @@ func main() {
 		os.Exit(0)
 	}()
 
-	err = getAndWriteNormalizeUrl(os.Args[1], outFile, true)
+	err = getAndWriteNormalizeUrl(os.Args[1], outFile)
 	if err != nil {
 		os.Remove(writeTo)
 		handleErr(err)
@@ -107,13 +135,13 @@ func argsHaveOption(long string, short string) (hasOption bool, foundAt int) {
 	return false, 0
 }
 
-func getAndWriteNormalizeUrl(website string, w io.Writer, bar bool) error {
-	err := getAndWrite(website, w, bar)
+func getAndWriteNormalizeUrl(website string, w io.Writer) error {
+	err := getAndWrite(website, w)
 	if err != nil && !strings.HasPrefix(website, "https://") && !strings.HasPrefix(website, "http://") { // protocol not already mentioned and error occurred
-		err = getAndWrite("https://"+website, w, bar)
+		err = getAndWrite("https://"+website, w)
 		if err != nil {
 			stderrln("Resorting to http...")
-			err = getAndWrite("http://"+website, w, bar)
+			err = getAndWrite("http://"+website, w)
 			if err != nil {
 				return err
 			}
@@ -122,37 +150,37 @@ func getAndWriteNormalizeUrl(website string, w io.Writer, bar bool) error {
 	return nil
 }
 
-func getAndWrite(website string, w io.Writer, bar bool) error {
+func getAndWrite(website string, w io.Writer) error {
+	start := time.Now()
 	response, err := http.Get(website)
 	//mime := mimetype.Detect([]byte)
 	if err != nil {
 		return err
 	}
 	defer response.Body.Close()
-	if bar {
-		pbar := pb.NewOptions64(response.ContentLength,
-			pb.OptionEnableColorCodes(true),
-			pb.OptionShowBytes(true),
-			pb.OptionSetWriter(os.Stderr),
-			pb.OptionThrottle(65*time.Millisecond),
-			pb.OptionShowCount(),
-			pb.OptionOnCompletion(func() {
-				stderrln()
-			}),
-			pb.OptionSetDescription("Downloading"),
-			pb.OptionFullWidth(),
-			pb.OptionSetTheme(pb.Theme{
-				Saucer:        "=",
-				SaucerPadding: " ",
-				BarStart:      "[",
-				BarEnd:        "]",
-			}))
-		io.Copy(io.MultiWriter(w, pbar), response.Body)
-		return nil
-	} else {
-		io.Copy(w, response.Body)
-		return nil
-	}
+
+	pbar := pb.NewOptions64(response.ContentLength,
+		pb.OptionEnableColorCodes(true),
+		pb.OptionShowBytes(true),
+		pb.OptionSetWriter(os.Stderr),
+		pb.OptionThrottle(65*time.Millisecond),
+		pb.OptionShowCount(),
+		pb.OptionClearOnFinish(),
+		//pb.OptionOnCompletion(func() {
+		//	stderrln()
+		//}),
+		pb.OptionSetDescription("Downloading"),
+		pb.OptionFullWidth(),
+		pb.OptionSetTheme(pb.Theme{
+			Saucer:        "=",
+			SaucerPadding: " ",
+			BarStart:      "[",
+			BarEnd:        "]",
+		}))
+
+	io.Copy(io.MultiWriter(w, pbar), response.Body)
+	stderrln("Done in", time.Since(start).Round(time.Millisecond))
+	return nil
 }
 
 func getClipWriter() (error, *clipboard) {
@@ -217,4 +245,8 @@ func handleErrStr(str string) {
 
 func stderrln(a ...interface{}) {
 	_, _ = fmt.Fprintln(os.Stderr, a...)
+}
+
+func removeKeepOrder(s []string, i int) []string {
+	return append(s[:i], s[i+1:]...)
 }
