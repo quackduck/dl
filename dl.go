@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,7 +14,6 @@ import (
 	"time"
 
 	"github.com/fatih/color"
-	//"github.com/gabriel-vasile/mimetype"
 	pb "github.com/schollz/progressbar/v3"
 )
 
@@ -165,16 +163,13 @@ func getAndWrite(website string, w io.Writer) error {
 		pb.OptionThrottle(65*time.Millisecond),
 		pb.OptionShowCount(),
 		pb.OptionClearOnFinish(),
-		//pb.OptionOnCompletion(func() {
-		//	stderrln()
-		//}),
 		pb.OptionSetDescription("Downloading"),
 		pb.OptionFullWidth(),
 		pb.OptionSetTheme(pb.Theme{
 			Saucer:        "=",
 			SaucerPadding: " ",
-			BarStart:      "[",
-			BarEnd:        "]",
+			BarStart:      "|",
+			BarEnd:        "|",
 		}))
 
 	io.Copy(io.MultiWriter(w, pbar), response.Body)
@@ -188,7 +183,7 @@ func getClipWriter() (*clipboard, error) {
 	case "darwin":
 		copyCmd = exec.Command("pbcopy")
 	case "windows":
-		copyCmd = exec.Command("powershell.exe", "-command", "Set-Clipboard") //-Value "+"\""+s+"\"")
+		copyCmd = exec.Command("powershell.exe", "-command", "Set-Clipboard")
 	default:
 		if _, err := exec.LookPath("xclip"); err == nil {
 			copyCmd = exec.Command("xclip", "-in", "-selection", "clipboard")
