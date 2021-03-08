@@ -68,7 +68,7 @@ func main() {
 		return
 	}
 	if hasOption, _ := argsHaveOption("print", "p"); hasOption {
-		err := getAndWriteNormalizeUrl(os.Args[2], os.Stdout)
+		err := getAndWriteNormalizeURL(os.Args[2], os.Stdout)
 		if err != nil {
 			handleErr(err)
 			return
@@ -81,7 +81,7 @@ func main() {
 			handleErr(err)
 			return
 		}
-		err = getAndWriteNormalizeUrl(os.Args[2], w)
+		err = getAndWriteNormalizeURL(os.Args[2], w)
 		if err != nil {
 			handleErr(err)
 			return
@@ -112,7 +112,7 @@ func main() {
 		os.Exit(0)
 	}()
 
-	err = getAndWriteNormalizeUrl(os.Args[1], outFile)
+	err = getAndWriteNormalizeURL(os.Args[1], outFile)
 	if err != nil {
 		os.Remove(writeTo)
 		handleErr(err)
@@ -134,7 +134,7 @@ func argsHaveOption(long string, short string) (hasOption bool, foundAt int) {
 	return false, 0
 }
 
-func getAndWriteNormalizeUrl(website string, w io.Writer) error {
+func getAndWriteNormalizeURL(website string, w io.Writer) error {
 	err := getAndWrite(website, w)
 	if err != nil && !strings.HasPrefix(website, "https://") && !strings.HasPrefix(website, "http://") { // protocol not already mentioned and error occurred
 		err = getAndWrite("https://"+website, w)
