@@ -76,7 +76,7 @@ func main() {
 		return
 	}
 	if hasOption, _ := argsHaveOption("copy", "c"); hasOption {
-		err, w := getClipWriter()
+		w, err := getClipWriter()
 		if err != nil {
 			handleErr(err)
 			return
@@ -182,7 +182,7 @@ func getAndWrite(website string, w io.Writer) error {
 	return nil
 }
 
-func getClipWriter() (error, *clipboard) {
+func getClipWriter() (*clipboard, error) {
 	var copyCmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
@@ -199,21 +199,21 @@ func getClipWriter() (error, *clipboard) {
 		} else if _, err = exec.LookPath("termux-clipboard-set"); err == nil {
 			copyCmd = exec.Command("termux-clipboard-set")
 		} else {
-			handleErr(errors.New("sorry, uniclip won't work if you don't have xsel, xclip, wayland or Termux:API installed :(\nyou can create an issue at https://github.com/quackduck/uniclip/issues"))
+			handleErrStr("Sorry, --copy won't work if you don't have xsel, xclip, wayland or Termux:API installed")
 			os.Exit(2)
 		}
 	}
 	in, err := copyCmd.StdinPipe()
 	if err != nil {
-		return err, nil
+		return nil, err
 	}
 	if err = copyCmd.Start(); err != nil {
-		return err, nil
+		return nil, err
 	}
-	return nil, &clipboard{
+	return &clipboard{
 		in,
 		copyCmd,
-	}
+	}, nil
 }
 
 type clipboard struct {
